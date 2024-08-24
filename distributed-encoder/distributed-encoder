@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: AGPL-3.0
+
+_bin="$( \
+  dirname \
+    "$( \
+      command \
+        -v \
+	  "env")")"
+_lib="${_bin}/../lib"
+_share="${_bin}/../share"
+source \
+  "${_lib}/libcrash-bash/crash-bash"
+
+_root_requirements() {
+  _check_cmd \
+    "mediasplit" \
+    "media-tools"
+  _check_cmd \
+    "remote-encoder" \
+    "remote-encoder"
+}
+
+# shellcheck disable=SC2034
+_global_variables() {
+  encode_date=""
+  target_hosts=()
+  in_file=""
+  out_file=""
+  color=""
+  quiet=""
+}
+
+_root_dim() {
+  local \
+    _brightness \
+    _bbrightnessctl_opts=() \
+    _displayctl_opts=() \
+    _status
+  if [[ "${quiet}" != "y" ]]; then
+    _bbrightnessctl_opts+=(
+      -v
+    )
+    _displayctl_opts+=(
+      -v
+    )
+  fi
+  _brightness="$( \
+    bbrightnessctl \
+      "${_bbrightnessctl_opts[@]}" \
+      -m \
+        root \
+      get || \
+      true)"
+  if [ 1 -le "${_brightness}" ] ; then
+    _msg_info \
+      "Current brightness: ${_brightness}"
+    bbrightnessctl \
+      "${_bbrightnessctl_opts[@]}" \
+      -m \
+        root \
+      set \
+        0 || \
+      true
+  elif [[ 0 == "${_brightness}" ]]; then
+    _status="$( \
+      display-status)"
+    if [[ "${_status}" == "off" ]]; then
+      _msg_info \
+        "Display off, turning on"
+      displayctl \
+        "${_displayctl_opts[@]}" \
+        set \
+          status \
+          'on'
+      bbrightnessctl \
+        "${_bbrightnessctl_opts[@]}" \
+        -m \
+          root \
+        set \
+          0 || \
+        true
+    fi || \
+      true
+  fi || \
+    true
+}
+
+_distributed_encoder() {
+  local \
+    _in="${1}" \
+    _out="${2}" \
+    _hosts=() \
+    _mediasplit_opts=() \
+    _remote_encoder_opts=() \
+    _tmp
+  shift \
+    2
+  _hosts=(
+    "$@"
+  )
+  if [[ "${quiet}" != "y"]]; then
+    _mediasplit_opts+=(
+      -v
+    )
+    _remote_encoder_opts+=(
+      -v
+    )
+  fi
+  _tmp="$( \
+    mktemp \
+      -d)"
+  _mediasplit_opts+=(
+    -n
+      "${#_hosts}"
+  )
+  mediasplit \
+    "${mediasplit_opts[@]}" \
+    "${_in}" \
+    "${_tmp}/out"
+  tree \
+    "${_tmp}"
+}
+
+_auto_detect_mode() {
+  local \
+    _os
+  _os="$( \
+    uname \
+      -o)"
+  if [[ "${_os}" == "Android" ]]; then
+    _root_requirements
+    echo \
+      "root"
+  elif [[ "${_os}" == "GNU/Linux" ]]; then
+    _msg_error \
+      "not implemented. something with xdotool needs to be written"
+  fi
+}
+
+_set_overrides() {
+  _set_override \
+    "encode" \
+    "date" \
+    "$(_get_date_human)"
+  if [[ "${target_hosts[*]}" == "" ]]; then
+    target_hosts+=(
+      "$(hotnamectl)"
+    )
+  fi
+  if [[ -v override_color ]]; then
+    color="${override_color}"
+  elif [[ -z "${color}" ]]; then
+    color="n"
+  fi
+  if [[ -v override_quiet ]]; then
+    quiet="${override_quiet}"
+  elif [[ -z "${quiet}" ]]; then
+    quiet="y"
+  fi
+}
+
+# Shows configuration options.
+_show_config() {
+  _msg_info "${app_name} configuration"
+  _msg_info "              Encode date:   $(_get "encode" "date")"
+  _msg_info "                  In file:   $(_get "in" "file")"
+  _msg_info "                 Out file:   $(_get "out" "file")"
+  _msg_info "             Target hosts:   $(_get "target" "hosts")"
+}
+
+# Show help usage, with an exit status.
+# $1: exit status number.
+_usage() {
+  local \
+    _usage_text
+  IFS='' \
+    read \
+      -r \
+      -d '' \
+      _usage_text << \
+        ENDUSAGETEXT || true
+
+Encode files using an array of remote encoders
+
+Usage:
+  $(_get "app" "name")
+    [options]
+  options:
+     -t <host>            Target encoder.
+                          Default: $(_get "target" "hosts")
+     -h                   This message.
+     -v                   Enable verbose output
+ENDUSAGETEXT
+  _printf \
+    '%s\n' \
+    "${_usage_text}"
+  exit \
+    "${1}"
+}
+
+_globals
+_global_variables
+# shellcheck disable=SC2004
+# shellcheck disable=SC2034
+while \
+  getopts \
+    't:cvh?' \
+    arg; do
+  case \
+    "${arg}" in
+    t) target_hosts+=(
+         "${OPTARG}"
+       ) ;;
+    c) override_color="y" ;;
+    v) override_quiet="n" ;;
+    h|?) _set_overrides && \
+	 _usage \
+           0 ;;
+    *)
+    _msg_error \
+      "Invalid argument '${arg}'" \
+      0 && \
+    _set_overrides && \
+    _usage \
+      1
+    ;;
+  esac
+done
+shift \
+  $(( \
+    OPTIND - 1 \
+  ))
+_set_overrides
+app_opts=(
+  "$(_get \
+       "in" \
+       "file")"
+  "$(_get \
+       "out" \
+       "file")"
+  "${target_hosts}"
+)
+_show_config
+_distributed_encoder \
+  "${app_opts[@]}"
+
+# vim:set sw=2 sts=-1 et:
