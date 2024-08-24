@@ -132,22 +132,6 @@ _distributed_encoder() {
     "${_tmp}"
 }
 
-_auto_detect_mode() {
-  local \
-    _os
-  _os="$( \
-    uname \
-      -o)"
-  if [[ "${_os}" == "Android" ]]; then
-    _root_requirements
-    echo \
-      "root"
-  elif [[ "${_os}" == "GNU/Linux" ]]; then
-    _msg_error \
-      "not implemented. something with xdotool needs to be written"
-  fi
-}
-
 _set_overrides() {
   _set_override \
     "encode" \
@@ -191,7 +175,7 @@ _usage() {
       _usage_text << \
         ENDUSAGETEXT || true
 
-Encode files using an array of remote encoders
+Encode files using multiple remote encoders
 
 Usage:
   $(_get "app" "name")
