@@ -32,93 +32,102 @@ _global_variables() {
   quiet=""
 }
 
-_root_dim() {
-  local \
-    _brightness \
-    _bbrightnessctl_opts=() \
-    _displayctl_opts=() \
-    _status
-  if [[ "${quiet}" != "y" ]]; then
-    _bbrightnessctl_opts+=(
-      -v
-    )
-    _displayctl_opts+=(
-      -v
-    )
-  fi
-  _brightness="$( \
-    bbrightnessctl \
-      "${_bbrightnessctl_opts[@]}" \
-      -m \
-        root \
-      get || \
-      true)"
-  if [ 1 -le "${_brightness}" ] ; then
-    _msg_info \
-      "Current brightness: ${_brightness}"
-    bbrightnessctl \
-      "${_bbrightnessctl_opts[@]}" \
-      -m \
-        root \
-      set \
-        0 || \
-      true
-  elif [[ 0 == "${_brightness}" ]]; then
-    _status="$( \
-      display-status)"
-    if [[ "${_status}" == "off" ]]; then
-      _msg_info \
-        "Display off, turning on"
-      displayctl \
-        "${_displayctl_opts[@]}" \
-        set \
-          status \
-          'on'
-      bbrightnessctl \
-        "${_bbrightnessctl_opts[@]}" \
-        -m \
-          root \
-        set \
-          0 || \
-        true
-    fi || \
-      true
-  fi || \
-    true
-}
-
 _distributed_encoder() {
   local \
     _in="${1}" \
     _out="${2}" \
+    _host \
     _hosts=() \
+    _vid \
+    _vids=() \
+    _h \
     _mediasplit_opts=() \
     _remote_encoder_opts=() \
+    _encoder_opts=() \
+    _vidcat_opts=() \
+    _pids=() \
     _tmp
   shift \
     2
   _hosts=(
     "$@"
   )
-  if [[ "${quiet}" != "y"]]; then
+  if [[ "${quiet}" != "y" ]]; then
     _mediasplit_opts+=(
       -v
     )
     _remote_encoder_opts+=(
       -v
     )
+    _vidcat_opts+=(
+      -v
+    )
   fi
   _tmp="$( \
     mktemp \
       -d)"
-  _mediasplit_opts+=(
-    -n
-      "${#_hosts}"
-  )
-  mediasplit \
-    "${mediasplit_opts[@]}" \
-    "${_in}" \
-    "${_tmp}/out"
+  _msg_info \
+    "Splitting in chunks"
+  tree \
+    "${_tmp}"
+  _h=1
+  if (( 1 < "${#_hosts[@]}" )); then
+    _mediasplit_opts+=(
+      -n
+        "${#_hosts[@]}"
+    )
+    mediasplit \
+      "${_mediasplit_opts[@]}" \
+      "${_in}" \
+      "${_tmp}/chunk"
+    for _host in "${_hosts[@]}"; do
+      _encoder_opts=(
+        "${_remote_encoder_opts[@]}"
+        -t
+          "${_host}"
+      )
+      _vid="${_tmp}/chunk.compressed.${_h}.mp4"
+      _vids+=(
+        "${_vid}"
+      )
+      _run \
+        "encode_${_host}" \
+        "0" \
+        "async" \
+        remote-encoder \
+          "${_encoder_opts[@]}" \
+          "${_tmp}/chunk.${_h}.mp4" \
+          "${_vid}" || \
+        true || \
+        true
+      _pids+=(
+        "$(_get_pid \
+             "encode_${_host}")"
+      )
+      _h="$((_h + 1))"
+    done
+    wait \
+      "${_pids[@]}" || \
+      true
+    _msg_info \
+      "Merging encoded chunks"
+    vidcat \
+      "${_vidcat_opts[@]}" \
+      "${_out}" \
+      "${_vids[@]}" || \
+      true
+  elif [[ 1 == "${#_hosts[@]}" ]]; then
+    _encoder_opts=(
+      "${_remote_encoder_opts[@]}"
+      -t
+        "${_hosts}"
+    )
+    remote-encoder \
+      "${_encoder_opts[@]}" \
+      "${_in}" \
+      "${_out}" || \
+    true
+  fi
   tree \
     "${_tmp}"
 }
@@ -232,6 +241,23 @@ shift \
   $(( \
     OPTIND - 1 \
   ))
+(( "$#" < 2 )) && \
+  _msg_error \
+    "Add an input and an output file argument" \
+    0 && \
+  _set_overrides && \
+  _usage \
+    1
+(( 0 < "$#" )) && \
+  _set \
+    "in" \
+    "file" \
+    "${1}"
+(( 1 < "$#" )) && \
+  _set \
+    "out" \
+    "file" \
+    "${2}"
 _set_overrides
 app_opts=(
   "$(_get \
@@ -240,7 +266,7 @@ app_opts=(
   "$(_get \
        "out" \
        "file")"
-  "${target_hosts}"
+  "${target_hosts[@]}"
 )
 _show_config
 _distributed_encoder \
