@@ -20,6 +20,9 @@ _root_requirements() {
   _check_cmd \
     "remote-encoder" \
     "remote-encoder"
+  _check_cmd \
+    "vidcat" \
+    "media-tools"
 }
 
 # shellcheck disable=SC2034
@@ -116,6 +119,13 @@ _distributed_encoder() {
       "${_out}" \
       "${_vids[@]}" || \
       true
+    rm \
+      -rf \
+      "${_tmp}"
+    if [[ "${quiet}" != "y" ]]; then
+      tree \
+        "${_tmp}"
+    fi
   elif [[ 1 == "${#_hosts[@]}" ]]; then
     _encoder_opts=(
       "${_remote_encoder_opts[@]}"
@@ -128,8 +138,6 @@ _distributed_encoder() {
       "${_out}" || \
     true
   fi
-  tree \
-    "${_tmp}"
 }
 
 _set_overrides() {
