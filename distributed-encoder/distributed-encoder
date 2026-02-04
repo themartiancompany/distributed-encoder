@@ -1,19 +1,46 @@
 #!/usr/bin/env bash
-#
-# SPDX-License-Identifier: AGPL-3.0
 
-_bin="$( \
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+#    ----------------------------------------------------------------------
+#    Copyright © 2024, 2025, 2026  Pellegrino Prevete
+#
+#    All rights reserved
+#    ----------------------------------------------------------------------
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+_bin="$(
   dirname \
-    "$( \
-      command \
-        -v \
-	  "env")")"
-_lib="${_bin}/../lib"
-_share="${_bin}/../share"
+    "$(command \
+         -v \
+         "env")")"
+_lib="$(
+  realpath \
+    "${_bin}/../lib")"
+_crash_bash="${_lib}/libcrash-bash/crash-bash"
+_sourced \
+  "${_crash_bash}" 2>"/dev/null" || \
 source \
-  "${_lib}/libcrash-bash/crash-bash"
+  "${_crash_bash}"
 
 _root_requirements() {
+  _check_cmd \
+    "hotnamectl" || \
+  _check_cmd \
+    "hostnamectl" \
+    "systemd"
   _check_cmd \
     "mediasplit" \
     "media-tools"
@@ -49,6 +76,7 @@ _distributed_encoder() {
     _encoder_opts=() \
     _vidcat_opts=() \
     _pids=() \
+    _msg=() \
     _tmp
   shift \
     2
@@ -69,8 +97,11 @@ _distributed_encoder() {
   _tmp="$( \
     mktemp \
       -d)"
-  _msg_info \
+  _msg=(
     "Splitting in chunks"
+  )
+  _msg_info \
+    "${_msg[*]}"
   tree \
     "${_tmp}"
   _h=1
@@ -112,8 +143,11 @@ _distributed_encoder() {
     wait \
       "${_pids[@]}" || \
       true
-    _msg_info \
+    _msg=(
       "Merging encoded chunks"
+    )
+    _msg_info \
+      "${_msg[*]}"
     vidcat \
       "${_vidcat_opts[@]}" \
       "${_out}" \
@@ -140,16 +174,12 @@ _distributed_encoder() {
   fi
 }
 
+_hotnamectl() {
+  hotnamectl || \
+  hostnamectl
+}
+
 _set_overrides() {
-  _set_override \
-    "encode" \
-    "date" \
-    "$(_get_date_human)"
-  if [[ "${target_hosts[*]}" == "" ]]; then
-    target_hosts+=(
-      "$(hotnamectl)"
-    )
-  fi
   if [[ -v override_color ]]; then
     color="${override_color}"
   elif [[ -z "${color}" ]]; then
@@ -160,21 +190,31 @@ _set_overrides() {
   elif [[ -z "${quiet}" ]]; then
     quiet="y"
   fi
+  _set_override \
+    "encode" \
+    "date" \
+    "$(_get_date_human)"
+  if [[ "${target_hosts[*]}" == "" ]]; then
+    target_hosts+=(
+      "$(_hotnamectl)"
+    )
+  fi
 }
 
 # Shows configuration options.
 _show_config() {
   _msg_info "${app_name} configuration"
-  _msg_info "              Encode date:   $(_get "encode" "date")"
-  _msg_info "                  In file:   $(_get "in" "file")"
-  _msg_info "                 Out file:   $(_get "out" "file")"
-  _msg_info "             Target hosts:   $(_get "target" "hosts")"
+  _msg_info "              Encode date:   ${encode_date}"
+  _msg_info "                  In file:   ${in_file}"
+  _msg_info "                 Out file:   ${out_file}"
+  _msg_info "             Target hosts:   ${target_hosts}"
 }
 
 # Show help usage, with an exit status.
 # $1: exit status number.
 _usage() {
   local \
+    _exit="${1}" \
     _usage_text
   IFS='' \
     read \
@@ -186,19 +226,22 @@ _usage() {
 Encode files using multiple remote encoders
 
 Usage:
-  $(_get "app" "name")
+  ${app_name}
     [options]
+
   options:
      -t <host>            Target encoder.
-                          Default: $(_get "target" "hosts")
+                          Default: ${target_hosts}
+
      -h                   This message.
      -v                   Enable verbose output
+
 ENDUSAGETEXT
   _printf \
     '%s\n' \
     "${_usage_text}"
   exit \
-    "${1}"
+    "${_exit}"
 }
 
 _globals
@@ -214,50 +257,49 @@ while \
     t) target_hosts+=(
          "${OPTARG}"
        ) ;;
-    c) override_color="y" ;;
-    v) override_quiet="n" ;;
-    h|?) _set_overrides && \
-	 _usage \
-           0 ;;
+    c)
+      override_color="y" ;;
+    v)
+      override_quiet="n" ;;
+    h|?)
+      _set_overrides
+      _usage \
+        0 ;;
     *)
-    _msg_error \
-      "Invalid argument '${arg}'" \
-      0 && \
-    _set_overrides && \
-    _usage \
-      1
-    ;;
+      _msg=(
+        "Invalid argument '${arg}'."
+      )
+      _msg_error \
+        "${_msg[*]}" \
+        0
+      _set_overrides
+      _usage \
+        1 ;;
   esac
 done
 shift \
-  $(( \
+  $((
     OPTIND - 1 \
   ))
-(( "$#" < 2 )) && \
+if (( "${#}" < 2 )); then
+  _msg=(
+    "Add an input and an output file argument"
+  )
   _msg_error \
-    "Add an input and an output file argument" \
-    0 && \
-  _set_overrides && \
+    "${_msg[*]}" \
+    0
+  _set_overrides
   _usage \
     1
-(( 0 < "$#" )) && \
-  _set \
-    "in" \
-    "file" \
-    "${1}"
-(( 1 < "$#" )) && \
-  _set \
-    "out" \
-    "file" \
-    "${2}"
+if (( 0 < "${#}" )); then
+  in_file="${1}"
+if (( 1 < "$#" )); then
+  out_file="${2}"
+fi
 _set_overrides
 app_opts=(
-  "$(_get \
-       "in" \
-       "file")"
-  "$(_get \
-       "out" \
-       "file")"
+  "${in_file}"
+  "${out_file}"
   "${target_hosts[@]}"
 )
 _show_config
